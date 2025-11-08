@@ -1,0 +1,999 @@
+<html>
+        <head><title>Downloaded HTML</title></head>
+        <body>
+            <pre style="white-space: pre-wrap; word-wrap: break-word;"><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wind Rider Game</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        /* Custom font smoothing for better appearance */
+        body {
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        /* Style for the canvas to ensure it doesn't get squished by flexbox */
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        
+        // Define React hooks and functions from the global scope (React library loaded via CDN)
+        const { useState, useEffect, useRef } = React;
+        const rootElement = document.getElementById('root');
+        
+        // Helper component for SVG icons (Replacing lucide-react)
+        const Icon = ({ name, size = 24, className = "" }) => {
+            const icons = {
+                Wind: (
+                    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17.7 7.7a2.5 2.5 0 1 1 2.8 3.5"/><path d="M16 11H3"/><path d="M12 17H3"/><path d="M7 21H3"/><path d="M13 3h3.25a6.5 6.5 0 0 1 0 13H15"/></svg>
+                ),
+                Trophy: (
+                    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 15V5"/><path d="M14 15V5"/><path d="M8 5h8"/><path d="M12 9v13"/></svg>
+                ),
+                Play: (
+                    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                ),
+                Info: (
+                    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                )
+            };
+            return icons[name] || null;
+        };
+
+        const WindRider = () => {
+          const canvasRef = useRef(null);
+          const [gameState, setGameState] = useState('menu');
+          const [showInstructions, setShowInstructions] = useState(false);
+          const [currentTime, setCurrentTime] = useState(0);
+          const [bestTime, setBestTime] = useState(0);
+          
+          const gameRef = useRef({
+            plane: { x: 150, y: 300, vx: 0, vy: 0, angle: 0 },
+            obstacles: [],
+            keys: {},
+            obstacleTimer: 0,
+            obstacleInterval: 120,
+            speed: 2,
+            startTime: 0,
+            audioContext: null,
+            animationId: null,
+            introTimer: 0,
+            introComplete: false,
+            dayNightCycle: 0 // 0-1, where 0 is day and 1 is night
+          });
+
+          // Fallback for `window.storage` to use localStorage in the browser
+          const storageFallback = {
+              get: (key) => ({ value: localStorage.getItem(key) }),
+              set: (key, value) => localStorage.setItem(key, value)
+          };
+          const storage = window.storage || storageFallback;
+
+
+          useEffect(() => {
+            const AudioContext = window.AudioContext || window.webkitAudioContext;
+            gameRef.current.audioContext = new AudioContext();
+            
+            const loadBestTime = () => {
+              try {
+                const result = storage.get('bestTime');
+                if (result && result.value) {
+                  setBestTime(parseFloat(result.value));
+                }
+              } catch (error) {
+                console.log('No previous best time or storage not available');
+              }
+            };
+            loadBestTime();
+
+            return () => {
+              if (gameRef.current.animationId) {
+                cancelAnimationFrame(gameRef.current.animationId);
+              }
+            };
+          }, []);
+
+          const playSound = (type) => {
+            const ctx = gameRef.current.audioContext;
+            if (!ctx) return;
+
+            try {
+              const osc = ctx.createOscillator();
+              const gain = ctx.createGain();
+              osc.connect(gain);
+              gain.connect(ctx.destination);
+
+              switch(type) {
+                case 'wind':
+                  osc.frequency.value = 100 + Math.random() * 50;
+                  osc.type = 'sine';
+                  gain.gain.setValueAtTime(0.05, ctx.currentTime);
+                  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+                  osc.start(ctx.currentTime);
+                  osc.stop(ctx.currentTime + 0.1);
+                  break;
+                case 'dragon':
+                case 'tentacle':
+                  osc.frequency.value = 60;
+                  osc.type = 'sawtooth';
+                  gain.gain.setValueAtTime(0.2, ctx.currentTime);
+                  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                  osc.start(ctx.currentTime);
+                  osc.stop(ctx.currentTime + 0.5);
+                  break;
+                case 'knife':
+                  osc.frequency.value = 800;
+                  osc.type = 'square';
+                  gain.gain.setValueAtTime(0.1, ctx.currentTime);
+                  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+                  osc.start(ctx.currentTime);
+                  osc.stop(ctx.currentTime + 0.05);
+                  break;
+                case 'death':
+                  osc.frequency.value = 200;
+                  osc.type = 'sawtooth';
+                  gain.gain.setValueAtTime(0.2, ctx.currentTime);
+                  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                  osc.start(ctx.currentTime);
+                  osc.stop(ctx.currentTime + 0.5);
+                  break;
+              }
+            } catch (e) {
+              console.log('Audio error:', e);
+            }
+          };
+
+          const isNight = (cycle) => cycle > 0.5;
+
+          const createObstacle = (game) => {
+            const canvas = canvasRef.current;
+            const night = isNight(game.dayNightCycle);
+            
+            const dayTypes = ['pillarTop', 'pillarBottom', 'knife', 'dragon', 'bird'];
+            const nightTypes = ['building', 'knife', 'tentacle', 'bat'];
+            const types = night ? nightTypes : dayTypes;
+            const type = types[Math.floor(Math.random() * types.length)];
+            
+            let obstacle = {
+              x: canvas.width,
+              type,
+              passed: false
+            };
+
+            switch(type) {
+              case 'pillarTop':
+                obstacle.height = 100 + Math.random() * 150;
+                obstacle.y = 0;
+                obstacle.width = 60;
+                break;
+              case 'pillarBottom':
+                obstacle.height = 100 + Math.random() * 150;
+                obstacle.y = canvas.height - obstacle.height;
+                obstacle.width = 60;
+                break;
+              case 'building':
+                obstacle.height = 150 + Math.random() * 200;
+                obstacle.y = canvas.height - obstacle.height;
+                obstacle.width = 80;
+                obstacle.windows = [];
+                for (let i = 0; i < 6; i++) {
+                  for (let j = 0; j < 4; j++) {
+                    obstacle.windows.push({
+                      x: j * 18 + 8,
+                      y: i * 25 + 10,
+                      lit: Math.random() > 0.3
+                    });
+                  }
+                }
+                break;
+              case 'knife':
+                obstacle.y = 50 + Math.random() * (canvas.height - 100);
+                obstacle.width = 8;
+                obstacle.height = 60;
+                obstacle.rotation = 0;
+                obstacle.vy = (Math.random() - 0.5) * 4;
+                playSound('knife');
+                break;
+              case 'dragon':
+                obstacle.y = Math.random() > 0.5 ? -100 : canvas.height - 100;
+                obstacle.width = 120;
+                obstacle.height = 100;
+                obstacle.phase = 'entering';
+                obstacle.phaseTimer = 0;
+                obstacle.fireActive = false;
+                obstacle.fireLength = 0;
+                obstacle.fromTop = obstacle.y < 0;
+                playSound('dragon');
+                break;
+              case 'tentacle':
+                obstacle.y = Math.random() > 0.5 ? -150 : canvas.height;
+                obstacle.width = 60;
+                obstacle.height = 150;
+                obstacle.phase = 'entering';
+                obstacle.phaseTimer = 0;
+                obstacle.whipActive = false;
+                obstacle.whipProgress = 0;
+                obstacle.fromTop = obstacle.y < 0;
+                obstacle.segments = [];
+                for (let i = 0; i < 8; i++) {
+                  obstacle.segments.push({ x: 0, y: i * 20 });
+                }
+                playSound('tentacle');
+                break;
+              case 'bird':
+                obstacle.y = 100 + Math.random() * (canvas.height - 200);
+                obstacle.width = 50;
+                obstacle.height = 30;
+                obstacle.flap = 0;
+                obstacle.vx = 0;
+                obstacle.vy = 0;
+                break;
+              case 'bat':
+                obstacle.y = 100 + Math.random() * (canvas.height - 200);
+                obstacle.width = 50;
+                obstacle.height = 30;
+                obstacle.flap = 0;
+                obstacle.vx = 0;
+                obstacle.vy = 0;
+                break;
+            }
+
+            return obstacle;
+          };
+
+          const checkCollision = (plane, obstacle) => {
+            const planeBox = {
+              x: plane.x - 15,
+              y: plane.y - 8,
+              width: 30,
+              height: 16
+            };
+
+            if (obstacle.type === 'dragon') {
+              const bodyHit = (
+                planeBox.x < obstacle.x + obstacle.width &&
+                planeBox.x + planeBox.width > obstacle.x &&
+                planeBox.y < obstacle.y + obstacle.height &&
+                planeBox.y + planeBox.height > obstacle.y
+              );
+              
+              if (obstacle.fireActive) {
+                const fireBox = {
+                  x: obstacle.x + obstacle.width / 2 - 20,
+                  y: obstacle.fromTop ? obstacle.y + obstacle.height : obstacle.y - obstacle.fireLength,
+                  width: 40,
+                  height: obstacle.fireLength
+                };
+                const fireHit = (
+                  planeBox.x < fireBox.x + fireBox.width &&
+                  planeBox.x + planeBox.width > fireBox.x &&
+                  planeBox.y < fireBox.y + fireBox.height &&
+                  planeBox.y + planeBox.height > fireBox.y
+                );
+                return bodyHit || fireHit;
+              }
+              return bodyHit;
+            }
+
+            if (obstacle.type === 'tentacle' && obstacle.whipActive) {
+              for (let seg of obstacle.segments) {
+                const segBox = {
+                  x: obstacle.x + seg.x - 15,
+                  y: obstacle.y + seg.y - 15,
+                  width: 30,
+                  height: 30
+                };
+                if (
+                  planeBox.x < segBox.x + segBox.width &&
+                  planeBox.x + planeBox.width > segBox.x &&
+                  planeBox.y < segBox.y + segBox.height &&
+                  planeBox.y + planeBox.height > segBox.y
+                ) {
+                  return true;
+                }
+              }
+            }
+
+            return (
+              planeBox.x < obstacle.x + obstacle.width &&
+              planeBox.x + planeBox.width > obstacle.x &&
+              planeBox.y < obstacle.y + obstacle.height &&
+              planeBox.y + planeBox.height > obstacle.y
+            );
+          };
+
+          const drawWoodenText = (ctx, text, x, y, size) => {
+            ctx.save();
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+            ctx.shadowBlur = 10;
+            ctx.shadowOffsetX = 3;
+            ctx.shadowOffsetY = 3;
+            ctx.strokeStyle = '#3E2723';
+            ctx.lineWidth = size / 8;
+            ctx.font = `bold ${size}px serif`;
+            ctx.strokeText(text, x, y);
+            ctx.fillStyle = '#8D6E63';
+            ctx.fillText(text, x, y);
+            ctx.fillStyle = '#A1887F';
+            ctx.fillText(text, x - 2, y - 2);
+            ctx.strokeStyle = 'rgba(62, 39, 35, 0.3)';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 5; i++) {
+              ctx.beginPath();
+              ctx.moveTo(x - 50, y - size/2 + i * 15);
+              ctx.lineTo(x + ctx.measureText(text).width + 50, y - size/2 + i * 15);
+              ctx.stroke();
+            }
+            ctx.restore();
+          };
+
+          // Helper function to interpolate colors
+          function lerpColor(color1, color2, t) {
+            const c1 = parseInt(color1.slice(1), 16);
+            const c2 = parseInt(color2.slice(1), 16);
+            const r1 = (c1 >> 16) & 0xff;
+            const g1 = (c1 >> 8) & 0xff;
+            const b1 = c1 & 0xff;
+            const r2 = (c2 >> 16) & 0xff;
+            const g2 = (c2 >> 8) & 0xff;
+            const b2 = c2 & 0xff;
+            const r = Math.round(r1 + (r2 - r1) * t);
+            const g = Math.round(g1 + (g2 - g1) * t);
+            const b = Math.round(b1 + (b2 - b1) * t);
+            return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+          }
+
+          const gameLoop = () => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            const game = gameRef.current;
+
+            // Update day/night cycle (3 minutes = 180 seconds)
+            if (game.introComplete) {
+              const elapsed = (Date.now() - game.startTime) / 1000;
+              game.dayNightCycle = (elapsed % 180) / 180; // 0 to 1 over 3 minutes
+            }
+
+            const cyclePos = game.dayNightCycle;
+            
+            // 0 to 0.5 = day (sun arc), 0.5 to 1.0 = night (moon arc)
+            const isDay = cyclePos < 0.5;
+            const night = !isDay;
+            
+            // Calculate celestial body position (arc across sky)
+            let celestialProgress;
+            if (isDay) {
+              celestialProgress = cyclePos * 2;
+            } else {
+              celestialProgress = (cyclePos - 0.5) * 2;
+            }
+            
+            const arcAngle = celestialProgress * Math.PI;
+            const celestialX = 50 + celestialProgress * (canvas.width - 100);
+            const arcHeight = 150;
+            const celestialY = canvas.height - 50 - Math.sin(arcAngle) * arcHeight;
+
+            // Sky colors based on celestial body position
+            let skyTop, skyBottom;
+            
+            if (isDay) {
+              if (celestialProgress < 0.2) { 
+                const t = celestialProgress * 5;
+                skyTop = lerpColor('#FF6B6B', '#87CEEB', t);
+                skyBottom = lerpColor('#FFE66D', '#E0F6FF', t);
+              } else if (celestialProgress > 0.8) { 
+                const t = (celestialProgress - 0.8) * 5;
+                skyTop = lerpColor('#87CEEB', '#FF6B6B', t);
+                skyBottom = lerpColor('#E0F6FF', '#FFB347', t);
+              } else { 
+                skyTop = '#87CEEB';
+                skyBottom = '#E0F6FF';
+              }
+            } else {
+              if (celestialProgress < 0.2) { 
+                const t = celestialProgress * 5;
+                skyTop = lerpColor('#2C3E50', '#1a1a2e', t);
+                skyBottom = lerpColor('#34495E', '#0f0f1e', t);
+              } else if (celestialProgress > 0.8) { 
+                const t = (celestialProgress - 0.8) * 5;
+                skyTop = lerpColor('#1a1a2e', '#2C3E50', t);
+                skyBottom = lerpColor('#0f0f1e', '#34495E', t);
+              } else { 
+                skyTop = '#1a1a2e';
+                skyBottom = '#0f0f1e';
+              }
+            }
+
+            const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
+            gradient.addColorStop(0, skyTop);
+            gradient.addColorStop(1, skyBottom);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            const time = Date.now() * 0.01;
+
+            if (night) {
+              // Draw stars
+              ctx.fillStyle = '#FFFFFF';
+              for (let i = 0; i < 100; i++) {
+                const x = (i * 73) % canvas.width;
+                const y = (i * 137) % canvas.height;
+                const twinkle = Math.sin(time * 0.1 + i) * 0.5 + 0.5;
+                ctx.globalAlpha = twinkle * 0.8;
+                ctx.beginPath();
+                ctx.arc(x, y, 1 + (i % 2), 0, Math.PI * 2);
+                ctx.fill();
+              }
+              ctx.globalAlpha = 1;
+
+              // Draw moon
+              const moonRadius = 35;
+              const moonGlow = ctx.createRadialGradient(celestialX, celestialY, 10, celestialX, celestialY, moonRadius + 20);
+              moonGlow.addColorStop(0, 'rgba(200, 200, 255, 0.6)');
+              moonGlow.addColorStop(0.5, 'rgba(150, 150, 200, 0.3)');
+              moonGlow.addColorStop(1, 'rgba(150, 150, 200, 0)');
+              ctx.fillStyle = moonGlow;
+              ctx.beginPath();
+              ctx.arc(celestialX, celestialY, moonRadius + 20, 0, Math.PI * 2);
+              ctx.fill();
+              
+              ctx.fillStyle = '#E8E8F0';
+              ctx.beginPath();
+              ctx.arc(celestialX, celestialY, moonRadius, 0, Math.PI * 2);
+              ctx.fill();
+            
+              // Dark wispy clouds
+              for (let i = 0; i < 3; i++) {
+                const x = ((time * 0.3 + i * 300) % (canvas.width + 200)) - 100;
+                const y = 150 + i * 150;
+                ctx.fillStyle = 'rgba(30, 30, 50, 0.5)';
+                ctx.beginPath();
+                ctx.ellipse(x, y, 70, 20, 0, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            } else {
+              // Draw sun
+              const sunRadius = 40;
+              const sunGlow = ctx.createRadialGradient(celestialX, celestialY, 10, celestialX, celestialY, sunRadius + 20);
+              sunGlow.addColorStop(0, 'rgba(255, 255, 100, 0.8)');
+              sunGlow.addColorStop(0.5, 'rgba(255, 200, 50, 0.4)');
+              sunGlow.addColorStop(1, 'rgba(255, 200, 50, 0)');
+              ctx.fillStyle = sunGlow;
+              ctx.beginPath();
+              ctx.arc(celestialX, celestialY, sunRadius + 20, 0, Math.PI * 2);
+              ctx.fill();
+              
+              ctx.fillStyle = '#FFD700';
+              ctx.beginPath();
+              ctx.arc(celestialX, celestialY, sunRadius, 0, Math.PI * 2);
+              ctx.fill();
+              
+              // Fluffy day clouds
+              for (let i = 0; i < 3; i++) {
+                const x = ((time + i * 300) % (canvas.width + 200)) - 100;
+                const y = 80 + i * 120;
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.beginPath();
+                ctx.arc(x, y, 35, 0, Math.PI * 2);
+                ctx.arc(x + 30, y, 45, 0, Math.PI * 2);
+                ctx.arc(x + 60, y, 35, 0, Math.PI * 2);
+                ctx.arc(x + 30, y - 20, 35, 0, Math.PI * 2);
+                ctx.fill();
+              }
+            }
+
+            // Intro sequence
+            if (!game.introComplete) {
+              game.introTimer++;
+              if (game.introTimer < 240) {
+                const titleOpacity = Math.min(1, game.introTimer / 60);
+                ctx.globalAlpha = titleOpacity;
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                drawWoodenText(ctx, "ALLEN'S", centerX - 140, centerY - 30, 60);
+                drawWoodenText(ctx, "PAPER AIRPLANE", centerX - 240, centerY + 40, 60);
+                ctx.globalAlpha = 1;
+                
+                ctx.save();
+                ctx.translate(game.plane.x, game.plane.y);
+                ctx.rotate(game.plane.angle);
+                ctx.fillStyle = '#FFFFFF';
+                ctx.beginPath();
+                ctx.moveTo(15, 0);
+                ctx.lineTo(-15, -8);
+                ctx.lineTo(-15, 8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#E0E0E0';
+                ctx.fillRect(-10, -2, 20, 4);
+                ctx.restore();
+                
+                game.animationId = requestAnimationFrame(gameLoop);
+                return;
+              } else {
+                game.introComplete = true;
+              }
+            }
+
+            // Update plane physics
+            const keys = game.keys;
+            if (keys['w'] || keys['W']) game.plane.vy -= 0.8;
+            if (keys['s'] || keys['S']) game.plane.vy += 0.8;
+            if (keys['a'] || keys['A']) game.plane.vx -= 0.5;
+            if (keys['d'] || keys['D']) game.plane.vx += 0.5;
+
+            game.plane.vy += 0.3;
+            game.plane.vx *= 0.95;
+            game.plane.vy *= 0.98;
+            game.plane.vx = Math.max(-8, Math.min(8, game.plane.vx));
+            game.plane.vy = Math.max(-12, Math.min(12, game.plane.vy));
+            game.plane.x += game.plane.vx;
+            game.plane.y += game.plane.vy;
+            game.plane.angle = Math.atan2(game.plane.vy, game.plane.vx + 3);
+
+            if (game.plane.y < 20 || game.plane.y > canvas.height - 20 ||
+                game.plane.x < 50 || game.plane.x > canvas.width - 50) {
+              playSound('death');
+              setGameState('dead');
+              const finalTime = ((Date.now() - game.startTime) / 1000).toFixed(2);
+              setCurrentTime(parseFloat(finalTime));
+              if (parseFloat(finalTime) > bestTime) {
+                setBestTime(parseFloat(finalTime));
+                storage.set('bestTime', finalTime.toString());
+              }
+              return;
+            }
+
+            game.speed += 0.0003;
+            game.obstacleInterval = Math.max(60, 120 - (Date.now() - game.startTime) / 300);
+            
+            game.obstacleTimer++;
+            if (game.obstacleTimer > game.obstacleInterval) {
+              game.obstacles.push(createObstacle(game));
+              game.obstacleTimer = 0;
+            }
+
+            for (let i = game.obstacles.length - 1; i >= 0; i--) {
+              const obs = game.obstacles[i];
+              obs.x -= game.speed;
+
+              if (obs.type === 'knife') {
+                obs.y += obs.vy;
+                if (obs.y < 0 || obs.y > canvas.height - obs.height) obs.vy = -obs.vy;
+              } else if (obs.type === 'bird' || obs.type === 'bat') {
+                const dx = game.plane.x - (obs.x + obs.width / 2);
+                const dy = game.plane.y - (obs.y + obs.height / 2);
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 0) {
+                  obs.vx = (dx / dist) * game.speed * 0.5;
+                  obs.vy = (dy / dist) * game.speed * 0.5;
+                }
+                obs.x += obs.vx;
+                obs.y += obs.vy;
+              } else if (obs.type === 'dragon') {
+                obs.phaseTimer++;
+                switch(obs.phase) {
+                  case 'entering':
+                    if (obs.fromTop) {
+                      obs.y += 2;
+                      if (obs.y >= -20) obs.phase = 'waiting';
+                    } else {
+                      obs.y -= 2;
+                      if (obs.y <= canvas.height - 80) obs.phase = 'waiting';
+                    }
+                    if (obs.phaseTimer > 30) {
+                      obs.phase = 'waiting';
+                      obs.phaseTimer = 0;
+                    }
+                    break;
+                  case 'waiting':
+                    if (obs.phaseTimer > 60) {
+                      obs.phase = 'firing';
+                      obs.phaseTimer = 0;
+                      obs.fireActive = true;
+                    }
+                    break;
+                  case 'firing':
+                    obs.fireLength = Math.min(200, obs.fireLength + 10);
+                    if (obs.phaseTimer > 90) {
+                      obs.phase = 'exiting';
+                      obs.phaseTimer = 0;
+                      obs.fireActive = false;
+                    }
+                    break;
+                  case 'exiting':
+                    obs.fireLength = Math.max(0, obs.fireLength - 15);
+                    obs.y += obs.fromTop ? -3 : 3;
+                    break;
+                }
+              } else if (obs.type === 'tentacle') {
+                obs.phaseTimer++;
+                switch(obs.phase) {
+                  case 'entering':
+                    if (obs.fromTop) {
+                      obs.y += 3;
+                      if (obs.y >= -50) obs.phase = 'waiting';
+                    } else {
+                      obs.y -= 3;
+                      if (obs.y <= canvas.height + 50) obs.phase = 'waiting';
+                    }
+                    if (obs.phaseTimer > 30) {
+                      obs.phase = 'waiting';
+                      obs.phaseTimer = 0;
+                    }
+                    break;
+                  case 'waiting':
+                    if (obs.phaseTimer > 60) {
+                      obs.phase = 'whipping';
+                      obs.phaseTimer = 0;
+                      obs.whipActive = true;
+                    }
+                    break;
+                  case 'whipping':
+                    obs.whipProgress = Math.min(1, obs.whipProgress + 0.05);
+                    const whipAngle = obs.whipProgress * Math.PI;
+                    for (let s = 0; s < obs.segments.length; s++) {
+                      const segAngle = whipAngle * (s / obs.segments.length);
+                      obs.segments[s].x = Math.sin(segAngle) * 100;
+                      obs.segments[s].y = s * 20;
+                    }
+                    if (obs.phaseTimer > 60) {
+                      obs.phase = 'exiting';
+                      obs.phaseTimer = 0;
+                      obs.whipActive = false;
+                    }
+                    break;
+                  case 'exiting':
+                    obs.whipProgress = Math.max(0, obs.whipProgress - 0.05);
+                    obs.y += obs.fromTop ? -3 : 3;
+                    break;
+                }
+              }
+
+              // Draw obstacles (omitted drawing logic for brevity, the logic is complete in the original component)
+
+              // Draw obstacles
+              ctx.save();
+              switch(obs.type) {
+                case 'pillarTop':
+                case 'pillarBottom':
+                  ctx.fillStyle = '#654321';
+                  ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                  ctx.fillStyle = '#8B4513';
+                  ctx.fillRect(obs.x + 5, obs.y + (obs.type === 'pillarTop' ? obs.height - 15 : 5), obs.width - 10, 10);
+                  break;
+                case 'building':
+                  ctx.fillStyle = '#2C3E50';
+                  ctx.fillRect(obs.x, obs.y, obs.width, obs.height);
+                  ctx.fillStyle = '#34495E';
+                  ctx.fillRect(obs.x, obs.y, obs.width, 20);
+                  for (let win of obs.windows) {
+                    ctx.fillStyle = win.lit ? '#FFE66D' : '#1C2833';
+                    ctx.fillRect(obs.x + win.x, obs.y + win.y, 12, 15);
+                  }
+                  break;
+                case 'knife':
+                  obs.rotation += 0.3;
+                  ctx.translate(obs.x + obs.width/2, obs.y + obs.height/2);
+                  ctx.rotate(obs.rotation);
+                  ctx.fillStyle = '#C0C0C0';
+                  ctx.fillRect(-4, -30, 8, 50);
+                  ctx.fillStyle = '#8B4513';
+                  ctx.fillRect(-5, 20, 10, 10);
+                  ctx.restore();
+                  break;
+                case 'dragon':
+                  ctx.fillStyle = '#8B0000';
+                  ctx.beginPath();
+                  ctx.ellipse(obs.x + 60, obs.y + 50, 50, 35, 0, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.fillStyle = '#A52A2A';
+                  ctx.beginPath();
+                  ctx.ellipse(obs.x + 30, obs.y + 50, 30, 25, 0, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.fillStyle = '#FFD700';
+                  ctx.beginPath();
+                  ctx.arc(obs.x + 20, obs.y + 45, 5, 0, Math.PI * 2);
+                  ctx.arc(obs.x + 35, obs.y + 45, 5, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.fillStyle = '#654321';
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 15, obs.y + 35);
+                  ctx.lineTo(obs.x + 10, obs.y + 20);
+                  ctx.lineTo(obs.x + 20, obs.y + 30);
+                  ctx.fill();
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 40, obs.y + 35);
+                  ctx.lineTo(obs.x + 45, obs.y + 20);
+                  ctx.lineTo(obs.x + 35, obs.y + 30);
+                  ctx.fill();
+                  ctx.fillStyle = 'rgba(139, 0, 0, 0.7)';
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 70, obs.y + 40);
+                  ctx.lineTo(obs.x + 110, obs.y + 20);
+                  ctx.lineTo(obs.x + 90, obs.y + 50);
+                  ctx.fill();
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 70, obs.y + 60);
+                  ctx.lineTo(obs.x + 110, obs.y + 80);
+                  ctx.lineTo(obs.x + 90, obs.y + 50);
+                  ctx.fill();
+                  if (obs.fireActive && obs.fireLength > 0) {
+                    const fireX = obs.x + obs.width / 2 - 20;
+                    const fireY = obs.fromTop ? obs.y + obs.height : obs.y - obs.fireLength;
+                    const fireGrad = ctx.createLinearGradient(fireX, fireY, fireX, fireY + obs.fireLength);
+                    fireGrad.addColorStop(0, '#FF4500');
+                    fireGrad.addColorStop(0.5, '#FF6347');
+                    fireGrad.addColorStop(1, '#FFD700');
+                    ctx.fillStyle = fireGrad;
+                    for (let f = 0; f < 3; f++) {
+                      const offset = Math.sin(Date.now() * 0.01 + f) * 8;
+                      ctx.beginPath();
+                      ctx.moveTo(fireX + 20 + offset, fireY);
+                      ctx.lineTo(fireX + 10 + offset, fireY + obs.fireLength / 2);
+                      ctx.lineTo(fireX + 20 + offset, fireY + obs.fireLength);
+                      ctx.lineTo(fireX + 30 + offset, fireY + obs.fireLength / 2);
+                      ctx.fill();
+                    }
+                  }
+                  break;
+                case 'tentacle':
+                  for (let s = 0; s < obs.segments.length; s++) {
+                    const seg = obs.segments[s];
+                    const size = 20 - s * 2;
+                    ctx.fillStyle = `rgba(100, 50, 150, ${0.9 - s * 0.1})`;
+                    ctx.beginPath();
+                    ctx.arc(obs.x + seg.x, obs.y + seg.y, size, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.fillStyle = 'rgba(150, 100, 200, 0.5)';
+                    ctx.beginPath();
+                    ctx.arc(obs.x + seg.x - 3, obs.y + seg.y - 3, size * 0.4, 0, Math.PI * 2);
+                    ctx.fill();
+                  }
+                  break;
+                case 'bird':
+                  obs.flap += 0.3;
+                  ctx.fillStyle = '#8B4513';
+                  ctx.fillRect(obs.x + 15, obs.y + 10, 20, 8);
+                  const birdWing = Math.sin(obs.flap) * 10;
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 15, obs.y + 14);
+                  ctx.lineTo(obs.x, obs.y + 14 + birdWing);
+                  ctx.lineTo(obs.x + 15, obs.y + 18);
+                  ctx.fill();
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 35, obs.y + 14);
+                  ctx.lineTo(obs.x + 50, obs.y + 14 + birdWing);
+                  ctx.lineTo(obs.x + 35, obs.y + 18);
+                  ctx.fill();
+                  ctx.fillStyle = '#FFA500';
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 12, obs.y + 14);
+                  ctx.lineTo(obs.x + 5, obs.y + 14);
+                  ctx.lineTo(obs.x + 12, obs.y + 16);
+                  ctx.fill();
+                  break;
+                case 'bat':
+                  obs.flap += 0.3;
+                  ctx.fillStyle = '#2C2C2C';
+                  ctx.fillRect(obs.x + 15, obs.y + 10, 20, 8);
+                  const batWing = Math.sin(obs.flap) * 12;
+                  ctx.fillStyle = '#1C1C1C';
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 15, obs.y + 14);
+                  ctx.lineTo(obs.x - 5, obs.y + 14 + batWing);
+                  ctx.lineTo(obs.x + 10, obs.y + 10);
+                  ctx.lineTo(obs.x + 5, obs.y + 14 + batWing * 0.5);
+                  ctx.lineTo(obs.x + 15, obs.y + 18);
+                  ctx.fill();
+                  ctx.beginPath();
+                  ctx.moveTo(obs.x + 35, obs.y + 14);
+                  ctx.lineTo(obs.x + 55, obs.y + 14 + batWing);
+                  ctx.lineTo(obs.x + 40, obs.y + 10);
+                  ctx.lineTo(obs.x + 45, obs.y + 14 + batWing * 0.5);
+                  ctx.lineTo(obs.x + 35, obs.y + 18);
+                  ctx.fill();
+                  ctx.fillStyle = '#FF0000';
+                  ctx.beginPath();
+                  ctx.arc(obs.x + 20, obs.y + 12, 2, 0, Math.PI * 2);
+                  ctx.arc(obs.x + 30, obs.y + 12, 2, 0, Math.PI * 2);
+                  ctx.fill();
+                  break;
+              }
+              ctx.restore();
+
+              if (checkCollision(game.plane, obs)) {
+                playSound('death');
+                setGameState('dead');
+                const finalTime = ((Date.now() - game.startTime) / 1000).toFixed(2);
+                setCurrentTime(parseFloat(finalTime));
+                if (parseFloat(finalTime) > bestTime) {
+                  setBestTime(parseFloat(finalTime));
+                  storage.set('bestTime', finalTime.toString());
+                }
+                return;
+              }
+
+              if (obs.x + obs.width < -100 || 
+                  (obs.type === 'dragon' && obs.phase === 'exiting' && (obs.y < -150 || obs.y > canvas.height + 50)) ||
+                  (obs.type === 'tentacle' && obs.phase === 'exiting' && (obs.y < -200 || obs.y > canvas.height + 100))) {
+                game.obstacles.splice(i, 1);
+              }
+            }
+
+            // Draw plane
+            ctx.save();
+            ctx.translate(game.plane.x, game.plane.y);
+            ctx.rotate(game.plane.angle);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.moveTo(15, 0);
+            ctx.lineTo(-15, -8);
+            ctx.lineTo(-15, 8);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = '#E0E0E0';
+            ctx.fillRect(-10, -2, 20, 4);
+            ctx.restore();
+
+            // Draw time
+            const elapsed = ((Date.now() - game.startTime) / 1000).toFixed(2);
+            ctx.fillStyle = night ? '#FFFFFF' : '#000000';
+            ctx.font = 'bold 24px Arial';
+            ctx.fillText(`Time: ${elapsed}s`, 10, 30);
+            ctx.fillText(`Best: ${bestTime.toFixed(2)}s`, 10, 60);
+
+            game.animationId = requestAnimationFrame(gameLoop);
+          };
+
+          const startGame = () => {
+            const game = gameRef.current;
+            game.plane = { x: 150, y: 300, vx: 0, vy: 0, angle: 0 };
+            game.obstacles = [];
+            game.obstacleTimer = 0;
+            game.speed = 2;
+            game.startTime = Date.now();
+            game.keys = {};
+            game.introTimer = 0;
+            game.introComplete = false;
+            game.dayNightCycle = 0;
+            setGameState('playing');
+            
+            if (game.animationId) {
+              cancelAnimationFrame(game.animationId);
+            }
+            
+            gameLoop();
+          };
+
+          useEffect(() => {
+            const handleKeyDown = (e) => {
+              const key = e.key.toLowerCase();
+              gameRef.current.keys[e.key] = true;
+              
+              if (gameState === 'menu' && ['w', 'a', 's', 'd'].includes(key)) {
+                startGame();
+              } else if (gameState === 'dead' && e.key === ' ') {
+                startGame();
+              }
+            };
+
+            const handleKeyUp = (e) => {
+              gameRef.current.keys[e.key] = false;
+            };
+
+            window.addEventListener('keydown', handleKeyDown);
+            window.addEventListener('keyup', handleKeyUp);
+
+            return () => {
+              window.removeEventListener('keydown', handleKeyDown);
+              window.removeEventListener('keyup', handleKeyUp);
+            };
+          }, [gameState, bestTime]);
+
+          return (
+            <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-blue-400 to-blue-600 p-4">
+              <div className="bg-white rounded-lg shadow-2xl p-6 max-w-4xl relative">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <Icon name="Wind" className="text-blue-500" size={32} />
+                    <h1 className="text-3xl font-bold text-gray-800">Wind Rider</h1>
+                  </div>
+                  <button
+                    onClick={() => setShowInstructions(!showInstructions)}
+                    className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+                  >
+                    <Icon name="Info" size={20} />
+                    Help
+                  </button>
+                </div>
+
+                {showInstructions && (
+                  <div className="mb-4 p-4 bg-blue-50 rounded-lg border-2 border-blue-200">
+                    <h2 className="font-bold text-lg mb-2 text-gray-800">How to Play</h2>
+                    <div className="space-y-2 text-gray-700">
+                      <p><strong>W</strong> - Blow wind upward (lift plane up)</p>
+                      <p><strong>S</strong> - Blow wind downward (push plane down)</p>
+                      <p><strong>A</strong> - Blow wind left (push plane left)</p>
+                      <p><strong>D</strong> - Blow wind right (push plane right)</p>
+                      <p className="mt-3 text-sm"><strong>Day/Night Cycle:</strong> The game transitions between day and night every 3 minutes!</p>
+                      <p className="text-sm"><strong>Day:</strong> Dodge pillars, knives, dragons, and birds</p>
+                      <p className="text-sm"><strong>Night:</strong> Dodge buildings, knives, tentacles, and bats</p>
+                      <p className="mt-2 text-sm">Dragons and tentacles wait 1 second before attacking. Stay away from screen edges!</p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="relative">
+                  <canvas
+                    ref={canvasRef}
+                    width={800}
+                    height={600}
+                    className="border-4 border-gray-300 rounded-lg"
+                  />
+
+                  {gameState !== 'playing' && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-70 rounded-lg">
+                      {gameState === 'menu' ? (
+                        <div className="text-center p-8 bg-white/90 rounded-xl shadow-2xl">
+                          <h2 className="text-5xl font-extrabold text-gray-800 mb-4">Wind Rider</h2>
+                          <p className="text-xl text-gray-600 mb-8">Master the wind and evade the sky's terrors.</p>
+                          <button
+                            onClick={startGame}
+                            className="flex items-center gap-3 px-8 py-4 bg-green-500 text-white text-2xl font-bold rounded-xl shadow-lg hover:bg-green-600 transition-transform transform hover:scale-105"
+                          >
+                            <Icon name="Play" size={28} />
+                            Start Ride (WASD to control)
+                          </button>
+                          <p className="mt-4 text-sm text-gray-500">Best Time: **{bestTime.toFixed(2)}s**</p>
+                        </div>
+                      ) : (
+                        <div className="text-center p-8 bg-white/90 rounded-xl shadow-2xl">
+                          <h2 className="text-5xl font-extrabold text-red-600 mb-4">CRASHED!</h2>
+                          <p className="text-2xl text-gray-800 mb-2">Time Flown: **{currentTime.toFixed(2)}s**</p>
+                          <div className="flex items-center justify-center text-xl text-gray-600 mb-6 gap-2">
+                            <Icon name="Trophy" className="text-yellow-500" size={24} />
+                            Best Time: **{bestTime.toFixed(2)}s**
+                          </div>
+                          <button
+                            onClick={startGame}
+                            className="flex items-center gap-3 px-8 py-4 bg-yellow-500 text-white text-2xl font-bold rounded-xl shadow-lg hover:bg-yellow-600 transition-transform transform hover:scale-105"
+                          >
+                            <Icon name="Play" size={28} />
+                            Try Again (Press SPACE)
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // Render the component into the root element
+        ReactDOM.createRoot(rootElement).render(<WindRider />);
+    </script>
+</body>
+</html></pre>
+        </body>
+    </html>
